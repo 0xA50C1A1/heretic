@@ -176,6 +176,14 @@ class Settings(BaseSettings):
         ),
     )
 
+    kl_divergence_token_threshold: float = Field(
+        default=0.95,
+        description=(
+            "The probability threshold used to identify the first non-deterministic token for KL divergence evaluation. "
+            "Token positions where the average top-1 probability is above this value (e.g., service tokens like <think>) will be skipped."
+        ),
+    )
+
     orthogonalize_direction: bool = Field(
         default=False,
         description=(

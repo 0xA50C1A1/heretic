@@ -657,7 +657,7 @@ class Model:
     # We work with logprobs rather than probabilities for numerical stability
     # when computing the KL divergence.
     def get_logprobs(self, prompts: list[Prompt]) -> Tensor:
-        # Generate a small lookahead window to skip deterministic prefix tokens
+        # Generate a small lookahead window to skip deterministic prefix tokens.
         max_lookahead = 10
         _, outputs = self.generate(
             prompts,
@@ -672,19 +672,19 @@ class Model:
         # Determine the evaluation token index on the first run (using the base model).
         # This ensures stable KL divergence across all trials.
         if self.eval_token_index is None:
-            # Examine the first prompt in the batch to find first non-deterministic token
             for i, logits in enumerate(scores):
-                probs = F.softmax(logits[0], dim=-1)
-                top_prob = torch.max(probs).item()
-                
-                # If top probability < 95%, model is making meaningful choices
-                # (not just emitting deterministic tags like <think>)
-                if top_prob < 0.95 or i == len(scores) - 1:
+                # Calculate the average top-1 token probability across the batch.
+                probs = F.softmax(logits, dim=-1)
+                top_probs = torch.max(probs, dim=-1)[0]
+                avg_top_prob = top_probs.mean().item()
+
+                # If the average probability is below the threshold, the model is making a choice.
+                if avg_top_prob < self.settings.kl_divergence_token_threshold or i == len(scores) - 1:
                     self.eval_token_index = i
                     print(f"  * Evaluation token index set to: [bold]{i}[/]")
                     break
-        
-        # Use the fixed index to ensure KL divergence compares same positions
+
+        # Use the fixed index to ensure KL divergence compares the same token positions.
         actual_index = min(self.eval_token_index, len(scores) - 1)
         return F.log_softmax(scores[actual_index], dim=-1)
 
