@@ -61,6 +61,7 @@ class Model:
         self.settings = settings
         self.response_prefix = ""
         self.needs_reload = False
+        self.eval_token_index = None  # Dynamically determined during first evaluation
 
         print()
         print(f"Loading model [bold]{settings.model}[/]...")
@@ -656,25 +657,36 @@ class Model:
     # We work with logprobs rather than probabilities for numerical stability
     # when computing the KL divergence.
     def get_logprobs(self, prompts: list[Prompt]) -> Tensor:
-        # We only generate one token, and we return the (log) probability distributions
-        # over the vocabulary at that token position, for each prompt.
+        # Generate a small lookahead window to skip deterministic prefix tokens
+        max_lookahead = 10
         _, outputs = self.generate(
             prompts,
-            max_new_tokens=1,
+            max_new_tokens=max_lookahead,
             output_scores=True,
             return_dict_in_generate=True,
         )
 
-        # This cast is valid because GenerateDecoderOnlyOutput is the return type
-        # of model.generate with return_dict_in_generate=True.
         outputs = cast(GenerateDecoderOnlyOutput, outputs)
+        scores = cast(tuple[FloatTensor], outputs.scores)
 
-        # Logits for the first (only) generated token.
-        # This cast is valid because we passed output_scores=True above.
-        logits = cast(tuple[FloatTensor], outputs.scores)[0]
-
-        # The returned tensor has shape (prompt, token).
-        return F.log_softmax(logits, dim=-1)
+        # Determine evaluation token index on first run (using base model)
+        # This ensures stable KL divergence across all trials
+        if self.eval_token_index is None:
+            # Examine the first prompt in the batch to find first non-deterministic token
+            for i, logits in enumerate(scores):
+                probs = F.softmax(logits[0], dim=-1)
+                top_prob = torch.max(probs).item()
+                
+                # If top probability < 95%, model is making meaningful choices
+                # (not just emitting deterministic tags like <think>)
+                if top_prob < 0.95 or i == len(scores) - 1:
+                    self.eval_token_index = i
+                    print(f"  * Evaluation token index set to: [bold]{i}[/]")
+                    break
+        
+        # Use the fixed index to ensure KL divergence compares same positions
+        actual_index = min(self.eval_token_index, len(scores) - 1)
+        return F.log_softmax(scores[actual_index], dim=-1)
 
     def get_logprobs_batched(self, prompts: list[Prompt]) -> Tensor:
         logprobs = []
