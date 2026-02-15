@@ -61,7 +61,7 @@ class Model:
         self.settings = settings
         self.response_prefix = ""
         self.needs_reload = False
-        self.eval_token_index = None  # Dynamically determined during first evaluation
+        self.eval_token_index: int | None = None  # Dynamically determined during the first evaluation.
 
         print()
         print(f"Loading model [bold]{settings.model}[/]...")
