@@ -669,8 +669,8 @@ class Model:
         outputs = cast(GenerateDecoderOnlyOutput, outputs)
         scores = cast(tuple[FloatTensor], outputs.scores)
 
-        # Determine evaluation token index on first run (using base model)
-        # This ensures stable KL divergence across all trials
+        # Determine the evaluation token index on the first run (using the base model).
+        # This ensures stable KL divergence across all trials.
         if self.eval_token_index is None:
             # Examine the first prompt in the batch to find first non-deterministic token
             for i, logits in enumerate(scores):
