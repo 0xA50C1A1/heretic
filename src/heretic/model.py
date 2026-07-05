@@ -49,9 +49,9 @@ def get_model_class(
 
 @dataclass
 class AbliterationParameters:
-    max_weight: float
+    max_weights: list[float]
     max_weight_position: float
-    min_weight: float
+    min_weights: list[float]
     min_weight_distance: float
 
 
@@ -98,7 +98,8 @@ class Model:
 
         self.model = None  # ty:ignore[invalid-assignment]
         self.max_memory = (
-            {int(k) if k.isdigit() else k: v for k, v in settings.max_memory.items()}
+            {int(k) if k.isdigit() else k: v for k,
+             v in settings.max_memory.items()}
             if settings.max_memory
             else None
         )
@@ -173,7 +174,8 @@ class Model:
         # LoRA B matrices are initialized to zero by default in PEFT,
         # so we don't need to do anything manually.
 
-        print(f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
+        print(
+            f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
 
         all_components = {}
         for layer_index in range(len(self.get_layers())):
@@ -211,12 +213,16 @@ class Model:
 
         target_modules = sorted(target_modules_set)
 
+        # Multidirectional SOM needs enough rank to represent all directions.
+        som_rank = self.settings.som_k if self.settings.multidirectional_som else 1
+
         if self.settings.row_normalization != RowNormalization.FULL:
-            # Rank 1 is sufficient for directional ablation without renormalization.
-            lora_rank = 1
+            # Rank 1 is sufficient for single-direction ablation without renormalization.
+            lora_rank = som_rank
         else:
             # Row magnitude preservation introduces nonlinear effects.
-            lora_rank = self.settings.full_normalization_lora_rank
+            lora_rank = max(
+                self.settings.full_normalization_lora_rank, som_rank)
 
         self.peft_config = LoraConfig(
             r=lora_rank,
@@ -231,9 +237,11 @@ class Model:
 
         # self.peft_config is a LoraConfig object rather than a dictionary,
         # so the result is a PeftModel rather than a PeftMixedModel.
-        self.model = cast(PeftModel, get_peft_model(self.model, self.peft_config))
+        self.model = cast(PeftModel, get_peft_model(
+            self.model, self.peft_config))
 
-        display_targets = sorted({name.rsplit(".", 1)[-1] for name in target_modules})
+        display_targets = sorted(
+            {name.rsplit(".", 1)[-1] for name in target_modules})
         print(
             f"* LoRA adapters initialized (target types: {', '.join(display_targets)})"
         )
@@ -397,50 +405,65 @@ class Model:
 
         # Standard self-attention out-projection (most models).
         with suppress(Exception):
-            try_add("attn.o_proj", layer.self_attn.o_proj)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("attn.o_proj", layer.self_attn.o_proj)
 
         # Qwen3.5 MoE hybrid layers use GatedDeltaNet (linear attention) instead of
         # standard self-attention, so self_attn.o_proj doesn't exist on those layers.
         with suppress(Exception):
-            try_add("attn.o_proj", layer.linear_attn.out_proj)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("attn.o_proj", layer.linear_attn.out_proj)
 
         # Most dense models.
         with suppress(Exception):
-            try_add("mlp.down_proj", layer.mlp.down_proj)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("mlp.down_proj", layer.mlp.down_proj)
 
         # Some MoE models (e.g. Qwen3).
         with suppress(Exception):
-            for expert in layer.mlp.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
-                try_add("mlp.down_proj", expert.down_proj)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute, not-iterable]
+            for expert in layer.mlp.experts:
+                # ty:ignore[possibly-missing-attribute]
+                try_add("mlp.down_proj", expert.down_proj)
 
         # Phi-3.5-MoE (and possibly others).
         with suppress(Exception):
-            for expert in layer.block_sparse_moe.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
-                try_add("mlp.down_proj", expert.w2)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute, not-iterable]
+            for expert in layer.block_sparse_moe.experts:
+                # ty:ignore[possibly-missing-attribute]
+                try_add("mlp.down_proj", expert.w2)
 
         # LFM dense operator blocks.
         with suppress(Exception):
-            try_add("attn.o_proj", layer.conv.out_proj)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("attn.o_proj", layer.conv.out_proj)
 
         with suppress(Exception):
-            try_add("mlp.down_proj", layer.feed_forward.w2)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("mlp.down_proj", layer.feed_forward.w2)
 
         # LFM transformer blocks.
         with suppress(Exception):
-            try_add("attn.o_proj", layer.self_attn.out_proj)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("attn.o_proj", layer.self_attn.out_proj)
 
         with suppress(Exception):
-            for expert in layer.feed_forward.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
-                try_add("mlp.down_proj", expert.w2)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute, not-iterable]
+            for expert in layer.feed_forward.experts:
+                # ty:ignore[possibly-missing-attribute]
+                try_add("mlp.down_proj", expert.w2)
 
         # Granite MoE Hybrid - attention layers with shared_mlp.
         with suppress(Exception):
-            try_add("mlp.down_proj", layer.shared_mlp.output_linear)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute]
+            try_add("mlp.down_proj", layer.shared_mlp.output_linear)
 
         # Granite MoE Hybrid - MoE layers with experts.
         with suppress(Exception):
-            for expert in layer.moe.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
-                try_add("mlp.down_proj", expert.output_linear)  # ty:ignore[possibly-missing-attribute]
+            # ty:ignore[possibly-missing-attribute, not-iterable]
+            for expert in layer.moe.experts:
+                # ty:ignore[possibly-missing-attribute]
+                try_add("mlp.down_proj", expert.output_linear)
 
         # We need at least one module across all components for abliteration to work.
         total_modules = sum(len(mods) for mods in modules.values())
@@ -460,90 +483,72 @@ class Model:
 
     def abliterate(
         self,
-        refusal_directions: Tensor,
+        refusal_directions: Tensor,  # (layers, num_directions, hidden_dim)
         direction_index: float | None,
         parameters: dict[str, AbliterationParameters],
     ):
+        _, num_directions, _ = refusal_directions.shape
+
         if direction_index is None:
             refusal_direction = None
         else:
             # The index must be shifted by 1 because the first element
             # of refusal_directions is the direction for the embeddings.
-            weight, index = math.modf(direction_index + 1)
+            weight_frac, index = math.modf(direction_index + 1)
+            idx1 = int(index)
+            idx2 = idx1 + 1
+            # Interpolate per direction across the two layer indices.
+            # Result shape: (num_directions, hidden_dim)
             refusal_direction = F.normalize(
-                refusal_directions[int(index)].lerp(
-                    refusal_directions[int(index) + 1],
-                    weight,
-                ),
+                refusal_directions[idx1].lerp(
+                    refusal_directions[idx2], weight_frac),
                 p=2,
-                dim=0,
+                dim=1,
             )
 
-        # Note that some implementations of abliteration also orthogonalize
-        # the embedding matrix, but it's unclear if that has any benefits.
         for layer_index in range(len(self.get_layers())):
             for component, modules in self.get_layer_modules(layer_index).items():
                 params = parameters[component]
 
-                # Type inference fails here for some reason.
-                distance = cast(float, abs(layer_index - params.max_weight_position))
+                if (
+                    len(params.max_weights) != num_directions
+                    or len(params.min_weights) != num_directions
+                ):
+                    raise ValueError(
+                        f"Direction/weight count mismatch for '{component}': "
+                        f"{num_directions} directions but {len(params.max_weights)} max_weights."
+                    )
 
-                # Don't orthogonalize layers that are more than
-                # min_weight_distance away from max_weight_position.
+                distance = cast(float, abs(
+                    layer_index - params.max_weight_position))
                 if distance > params.min_weight_distance:
                     continue
 
-                # Interpolate linearly between max_weight and min_weight
-                # over min_weight_distance.
-                weight = params.max_weight + (distance / params.min_weight_distance) * (
-                    params.min_weight - params.max_weight
-                )
+                # Per-direction interpolated weights.
+                weights = [
+                    mw + (distance / params.min_weight_distance) * (mnw - mw)
+                    for mw, mnw in zip(params.max_weights, params.min_weights)
+                ]
 
-                # A weight of 0 disables this component's ablation. reset_model() has
-                # already left the adapter at identity, so abort before the otherwise
-                # wasteful decomposition (which would also be operating on a zero matrix).
-                if weight == 0:
+                # If every direction is disabled, the adapter is already at identity.
+                if all(w == 0 for w in weights):
                     continue
 
                 if refusal_direction is None:
-                    # The index must be shifted by 1 because the first element
-                    # of refusal_directions is the direction for the embeddings.
-                    layer_refusal_direction = refusal_directions[layer_index + 1]
+                    # Shifted by 1 because index 0 is the embedding direction.
+                    current_dirs = refusal_directions[layer_index + 1]
                 else:
-                    layer_refusal_direction = refusal_direction
+                    current_dirs = refusal_direction
 
                 for module in modules:
-                    # FIXME: This cast is potentially invalid, because the program logic
-                    #        does not guarantee that the module is of type Linear, and in fact
-                    #        the retrieved modules might not conform to the interface assumed
-                    #        below (though they do in practice). However, this is difficult
-                    #        to fix cleanly, because get_layer_modules is called twice on
-                    #        different model configurations, and PEFT employs different
-                    #        module types depending on the chosen quantization.
                     module = cast(Linear, module)
 
-                    # LoRA abliteration: delta W = -lambda * v * (v^T W)
-                    # lora_B = -lambda * v
-                    # lora_A = v^T W
-
-                    # Use the FP32 refusal direction directly (no downcast/upcast)
-                    # and move to the correct device.
-                    v = layer_refusal_direction.to(module.weight.device)
-
-                    # Get W (dequantize if necessary).
-                    #
-                    # FIXME: This cast is valid only under the assumption that the original
-                    #        module wrapped by the LoRA adapter has a weight attribute.
-                    #        See the comment above for why this is currently not guaranteed.
                     base_weight = cast(Tensor, module.base_layer.weight)
                     quant_state = getattr(base_weight, "quant_state", None)
 
                     if quant_state is None:
                         W = base_weight.to(torch.float32)
                     else:
-                        # 4-bit quantization.
-                        # This cast is always valid. Type inference fails here because the
-                        # bnb.functional module is not found by ty for some reason.
                         W = cast(
                             Tensor,
                             bnb.functional.dequantize_4bit(  # ty:ignore[possibly-missing-attribute]
@@ -552,67 +557,70 @@ class Model:
                             ).to(torch.float32),
                         )
 
-                    # Flatten weight matrix to (out_features, in_features).
                     W = W.view(W.shape[0], -1)
 
                     if self.settings.row_normalization == RowNormalization.FULL:
-                        # Keep a reference to the original weight matrix so we can subtract it later.
                         W_org = W
 
                     if self.settings.row_normalization != RowNormalization.NONE:
-                        # Get the row norms.
                         W_row_norms = LA.vector_norm(W, dim=1, keepdim=True)
-                        # Normalize the weight matrix along the rows.
                         W = F.normalize(W, p=2, dim=1)
 
-                    # Calculate lora_A = v^T W
-                    # v is (d_out,), W is (d_out, d_in)
-                    # v @ W -> (d_in,)
-                    lora_A = (v @ W).view(1, -1)
+                    r = self.peft_config.r
 
-                    # Calculate lora_B = -weight * v
-                    # v is (d_out,)
-                    lora_B = (-weight * v).view(-1, 1)
+                    if (
+                        num_directions == 1
+                        and self.settings.row_normalization != RowNormalization.FULL
+                    ):
+                        # Fast path: identical to the original single-direction logic.
+                        v = current_dirs[0].to(module.weight.device)
+                        w = weights[0]
+                        lora_A = (v @ W).view(1, -1)
+                        lora_B = (-w * v).view(-1, 1)
+                        if self.settings.row_normalization == RowNormalization.PRE:
+                            lora_B = W_row_norms * lora_B
+                    else:
+                        # Accumulate the delta over all directions, then low-rank factorize.
+                        total_delta = None
+                        for i in range(num_directions):
+                            w = weights[i]
+                            if w == 0:
+                                continue
+                            v = current_dirs[i].to(module.weight.device)
+                            lA = (v @ W).view(1, -1)
+                            lB = (-w * v).view(-1, 1)
+                            d = lB @ lA
+                            total_delta = d if total_delta is None else total_delta + d
 
-                    if self.settings.row_normalization == RowNormalization.PRE:
-                        # Make the LoRA adapter apply to the original weight matrix.
-                        lora_B = W_row_norms * lora_B
-                    elif self.settings.row_normalization == RowNormalization.FULL:
-                        # Approximates https://huggingface.co/blog/grimjim/norm-preserving-biprojected-abliteration
-                        W = W + lora_B @ lora_A
-                        # Normalize the adjusted weight matrix along the rows.
-                        W = F.normalize(W, p=2, dim=1)
-                        # Restore the original row norms of the weight matrix.
-                        W = W * W_row_norms
-                        # Subtract the original matrix to turn W into a delta.
-                        W = W - W_org
-                        # Use a low-rank SVD to get an approximation of the matrix.
-                        r = self.peft_config.r
+                        if total_delta is None:
+                            continue
 
-                        # svd_lowrank is randomized:
-                        # https://github.com/pytorch/pytorch/blob/20919052303c0b5ba87f8bf7e19237dc33ab09d3/torch/_lowrank.py#L108-L109
-                        # Reseed immediately before the call so restoring a trial is independent of RNG history.
+                        if self.settings.row_normalization == RowNormalization.FULL:
+                            # Approximates norm-preserving biprojected abliteration,
+                            # applied to the combined multi-direction delta.
+                            W_new = W + total_delta
+                            W_new = F.normalize(W_new, p=2, dim=1)
+                            W_new = W_new * W_row_norms
+                            delta = W_new - W_org
+                        elif self.settings.row_normalization == RowNormalization.PRE:
+                            delta = W_row_norms * total_delta
+                        else:  # NONE
+                            delta = total_delta
+
+                        # svd_lowrank is randomized; reseed for reproducibility.
                         torch.manual_seed(self.settings.seed)
-                        # "It's safe to call this function if CUDA is not available;
-                        # in that case, it is silently ignored."
-                        torch.cuda.manual_seed_all(self.settings.seed)  # ty:ignore[invalid-argument-type]
-                        U, S, Vh = torch.svd_lowrank(W, q=2 * r + 4, niter=6)
+                        # ty:ignore[invalid-argument-type]
+                        torch.cuda.manual_seed_all(self.settings.seed)
 
-                        # Truncate it to the part we want to store in the LoRA adapter.
-                        # Note: svd_lowrank actually returns V, so transpose it to get Vh.
+                        q = min(2 * r + 4, min(delta.shape))
+                        U, S, Vh = torch.svd_lowrank(delta, q=q, niter=6)
                         U = U[:, :r]
                         S = S[:r]
                         Vh = Vh[:, :r].T
-                        # Transfer it into the LoRA adapter components. Split the singular values
-                        # evenly between the two components to keep their norms balanced and avoid
-                        # potential issues with numerical stability.
                         sqrt_S = torch.sqrt(S)
                         lora_B = U @ torch.diag(sqrt_S)
                         lora_A = torch.diag(sqrt_S) @ Vh
 
-                    # Assign to adapters. The adapter name is "default", because that's
-                    # what PEFT uses when no name is explicitly specified, as above.
-                    # These casts are therefore valid.
                     weight_A = cast(Tensor, module.lora_A["default"].weight)
                     weight_B = cast(Tensor, module.lora_B["default"].weight)
                     weight_A.data = lora_A.to(weight_A.dtype)
@@ -662,7 +670,8 @@ class Model:
             **inputs,
             **kwargs,
             pad_token_id=self.tokenizer.pad_token_id,
-            do_sample=False,  # Use greedy decoding to ensure deterministic outputs.
+            # Use greedy decoding to ensure deterministic outputs.
+            do_sample=False,
         )  # ty:ignore[call-non-callable]
 
         return inputs, outputs
@@ -681,7 +690,7 @@ class Model:
             # Extract the newly generated part.
             # This cast is valid because the input_ids property is a Tensor
             # if the tokenizer is invoked with return_tensors="pt", as above.
-            outputs[:, cast(Tensor, inputs["input_ids"]).shape[1] :],
+            outputs[:, cast(Tensor, inputs["input_ids"]).shape[1]:],
             skip_special_tokens=skip_special_tokens,
         )
 
@@ -720,14 +729,16 @@ class Model:
 
         # Hidden states for the first (only) generated token.
         # This cast is valid because we passed output_hidden_states=True above.
-        hidden_states = cast(tuple[tuple[FloatTensor]], outputs.hidden_states)[0]
+        hidden_states = cast(tuple[tuple[FloatTensor]],
+                             outputs.hidden_states)[0]
 
         # The returned tensor has shape (prompt, layer, component).
         residuals = torch.stack(
             # layer_hidden_states has shape (prompt, position, component),
             # so this extracts the hidden states at the end of each prompt,
             # and stacks them up over the layers.
-            [layer_hidden_states[:, -1, :] for layer_hidden_states in hidden_states],
+            [layer_hidden_states[:, -1, :]
+                for layer_hidden_states in hidden_states],
             dim=1,
         )
 
@@ -866,7 +877,7 @@ class Model:
         return cast(
             str,
             self.tokenizer.decode(
-                outputs[0, inputs["input_ids"].shape[1] :],
+                outputs[0, inputs["input_ids"].shape[1]:],
                 skip_special_tokens=True,
             ),
         )

@@ -217,7 +217,7 @@ def batchify(items: list[T], batch_size: int) -> list[list[T]]:
     return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
 
-def get_trial_parameters(trial: Trial | FrozenTrial) -> dict[str, str]:
+def get_trial_parameters(trial: Trial) -> dict[str, str]:
     params = {}
 
     direction_index = trial.user_attrs["direction_index"]
@@ -227,8 +227,11 @@ def get_trial_parameters(trial: Trial | FrozenTrial) -> dict[str, str]:
 
     for component, parameters in trial.user_attrs["parameters"].items():
         for name, value in parameters.items():
-            params[f"{component}.{name}"] = f"{value:.2f}"
-
+            if isinstance(value, list):
+                for direction, direction_value in enumerate(value):
+                    params[f"{component}.{name}.{direction}"] = f"{direction}: {direction_value:.2f}"
+            else:
+                params[f"{component}.{name}"] = f"{value:.2f}"
     return params
 
 

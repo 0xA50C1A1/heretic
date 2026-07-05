@@ -95,7 +95,8 @@ class BenchmarkSpecification(BaseModel):
         description="Task ID of the benchmark in the Language Model Evaluation Harness."
     )
 
-    name: str = Field(description="Name of the benchmark for presentation purposes.")
+    name: str = Field(
+        description="Name of the benchmark for presentation purposes.")
 
     description: str = Field(
         description="Description of the benchmark for presentation purposes."
@@ -103,7 +104,8 @@ class BenchmarkSpecification(BaseModel):
 
 
 class Settings(BaseSettings):
-    model: str = Field(description="Hugging Face model ID, or path to model on disk.")
+    model: str = Field(
+        description="Hugging Face model ID, or path to model on disk.")
 
     model_commit: str | None = Field(
         default=None,
@@ -343,6 +345,35 @@ class Settings(BaseSettings):
         ),
     )
 
+    multidirectional_som: bool = Field(
+        default=True,
+        description="Use multidirectional Self-Organising Maps. Requires 'minisom' package to be installed.",
+    )
+
+    som_x: int = Field(
+        default=4, description="Number of SOM neurons in the x-axis."
+    )
+
+    som_y: int = Field(
+        default=4, description="Number of SOM neurons in the y-axis."
+    )
+
+    som_lr: float = Field(
+        default=0.01, description="SOM learning rate."
+    )
+
+    som_sigma: float = Field(
+        default=0.5, description="SOM neighborhood radius."
+    )
+
+    som_k: int = Field(
+        default=4, description="Number of top neurons to use for multidirectional SOM."
+    )
+
+    som_iterations: int = Field(
+        default=10000, description="Number of SOM training iterations."
+    )
+
     n_trials: PositiveInt = Field(
         default=200,
         description="Number of abliteration trials to run during optimization.",
@@ -580,7 +611,8 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
-            init_settings,  # Used during resume - should override *all* other sources.
+            # Used during resume - should override *all* other sources.
+            init_settings,
             CliSettingsSource(
                 settings_cls,
                 cli_parse_args=True,

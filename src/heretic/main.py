@@ -3,6 +3,62 @@
 
 # ruff: noqa: E402
 
+from .utils import (
+    ask_if_unset,
+    format_duration,
+    format_exception,
+    get_file_sha256,
+    get_readme_intro,
+    get_trial_parameters,
+    is_hf_path,
+    load_prompts,
+    print,
+    print_memory_usage,
+    upload_reproduce_folder,
+)
+from .system import empty_cache, get_accelerator_info
+from .reproduce import (
+    check_environment,
+    collect_reproducibles,
+    load_reproduction_information,
+)
+from .model import AbliterationParameters, Model, get_model_class
+from .evaluator import Evaluator
+from .config import ExportStrategy, QuantizationMethod
+from .analyzer import Analyzer
+from rich.traceback import install
+from rich.table import Table
+from questionary import Choice, Style
+from pydantic import ValidationError
+from optuna.trial import TrialState, create_trial
+from optuna.study import StudyDirection
+from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
+from optuna.storages import JournalStorage
+from optuna.samplers import TPESampler
+from optuna.exceptions import ExperimentalWarning
+from optuna import Trial, TrialPruned
+from lm_eval.models.huggingface import HFLM
+from huggingface_hub import HfApi, ModelCard, ModelCardData
+import transformers
+import torch.nn.functional as F
+import torch
+import questionary
+import optuna
+import numpy as np
+import lm_eval
+import huggingface_hub
+from typing import Any
+from pathlib import Path
+from os.path import commonprefix
+from importlib.metadata import version
+from dataclasses import asdict
+import warnings
+import time
+import random
+import os
+import math
+import logging
+from .config import Settings
 import sys
 
 # Ensure standard output/error use UTF-8 instead of system default charmap (e.g. cp1252 on Windows).
@@ -12,8 +68,6 @@ for stream in (sys.stdout, sys.stderr):
         and (getattr(stream, "encoding", "") or "").lower() != "utf-8"
     ):
         stream.reconfigure(encoding="utf-8")  # type: ignore
-
-from .config import Settings
 
 
 def _is_help_invocation() -> bool:
@@ -34,64 +88,6 @@ from .progress import patch_tqdm
 # before any other module imports tqdm.
 patch_tqdm()
 """
-
-import logging
-import math
-import os
-import random
-import time
-import warnings
-from dataclasses import asdict
-from importlib.metadata import version
-from os.path import commonprefix
-from pathlib import Path
-from typing import Any
-
-import huggingface_hub
-import lm_eval
-import numpy as np
-import optuna
-import questionary
-import torch
-import torch.nn.functional as F
-import transformers
-from huggingface_hub import HfApi, ModelCard, ModelCardData
-from lm_eval.models.huggingface import HFLM
-from optuna import Trial, TrialPruned
-from optuna.exceptions import ExperimentalWarning
-from optuna.samplers import TPESampler
-from optuna.storages import JournalStorage
-from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
-from optuna.study import StudyDirection
-from optuna.trial import TrialState, create_trial
-from pydantic import ValidationError
-from questionary import Choice, Style
-from rich.table import Table
-from rich.traceback import install
-
-from .analyzer import Analyzer
-from .config import ExportStrategy, QuantizationMethod
-from .evaluator import Evaluator
-from .model import AbliterationParameters, Model, get_model_class
-from .reproduce import (
-    check_environment,
-    collect_reproducibles,
-    load_reproduction_information,
-)
-from .system import empty_cache, get_accelerator_info
-from .utils import (
-    ask_if_unset,
-    format_duration,
-    format_exception,
-    get_file_sha256,
-    get_readme_intro,
-    get_trial_parameters,
-    is_hf_path,
-    load_prompts,
-    print,
-    print_memory_usage,
-    upload_reproduce_folder,
-)
 
 
 def obtain_export_strategy(
@@ -219,7 +215,8 @@ def run():
         # either on the command line or in the configuration file.
         settings = Settings()  # ty:ignore[missing-argument]
     except ValidationError as error:
-        print(f"[red]Configuration contains [bold]{error.error_count()}[/] errors:[/]")
+        print(
+            f"[red]Configuration contains [bold]{error.error_count()}[/] errors:[/]")
 
         for error_details in error.errors():
             print(
@@ -239,9 +236,11 @@ def run():
     reproduction_mode = settings.reproduce is not None
 
     if settings.reproduce is not None:
-        print(f"Loading reproduction information from [bold]{settings.reproduce}[/]...")
+        print(
+            f"Loading reproduction information from [bold]{settings.reproduce}[/]...")
         # FIXME: "Reproduction"/"reproducibility" name inconsistency!
-        reproduction_information = load_reproduction_information(settings.reproduce)
+        reproduction_information = load_reproduction_information(
+            settings.reproduce)
 
         if reproduction_information["version"] not in ["1", "2"]:
             print(
@@ -259,7 +258,18 @@ def run():
 
         verify_hashes = reproduction_information["version"] != "1"
 
-        settings = Settings.model_validate(reproduction_information["settings"])
+        settings = Settings.model_validate(
+            reproduction_information["settings"])
+
+    if settings.multidirectional_som:
+        try:
+            from minisom import MiniSom  # noqa: F401
+        except ModuleNotFoundError:
+            print(
+                "[red]Self-Organizing Map is selected, but the 'minisom' package is not installed.[/]"
+            )
+            print("Install it with [bold]pip install minisom[/].")
+            return
 
     if settings.seed is None:
         settings.seed = random.randint(0, 2**32 - 1)
@@ -308,7 +318,8 @@ def run():
     study_checkpoint_file = os.path.join(
         settings.study_checkpoint_dir,
         "".join(
-            [(c if (c.isalnum() or c in ["_", "-"]) else "--") for c in settings.model]
+            [(c if (c.isalnum() or c in ["_", "-"]) else "--")
+             for c in settings.model]
         )
         + ".jsonl",
     )
@@ -401,7 +412,8 @@ def run():
             )
         elif action == "restart":
             os.unlink(study_checkpoint_file)
-            backend = JournalFileBackend(study_checkpoint_file, lock_obj=lock_obj)
+            backend = JournalFileBackend(
+                study_checkpoint_file, lock_obj=lock_obj)
             storage = JournalStorage(backend)
 
     model = Model(settings)
@@ -409,12 +421,14 @@ def run():
     print_memory_usage()
 
     print()
-    print(f"Loading good prompts from [bold]{settings.good_prompts.dataset}[/]...")
+    print(
+        f"Loading good prompts from [bold]{settings.good_prompts.dataset}[/]...")
     good_prompts = load_prompts(settings, settings.good_prompts)
     print(f"* [bold]{len(good_prompts)}[/] prompts loaded")
 
     print()
-    print(f"Loading bad prompts from [bold]{settings.bad_prompts.dataset}[/]...")
+    print(
+        f"Loading bad prompts from [bold]{settings.bad_prompts.dataset}[/]...")
     bad_prompts = load_prompts(settings, settings.bad_prompts)
     print(f"* [bold]{len(bad_prompts)}[/] prompts loaded")
 
@@ -496,7 +510,8 @@ def run():
                     # When using a Chain-of-Thought skip, we need to check that the prefix
                     # is actually complete (e.g. not missing a trailing newline).
                     print("* Rechecking with prefix...")
-                    responses = model.get_responses_batched(prefix_check_prompts)
+                    responses = model.get_responses_batched(
+                        prefix_check_prompts)
                     additional_prefix = commonprefix(responses).rstrip(" ")
                     if additional_prefix:
                         settings.response_prefix += additional_prefix
@@ -522,51 +537,108 @@ def run():
     print()
     print("Calculating per-layer refusal directions...")
 
-    needs_full_residuals = settings.print_residual_geometry or settings.plot_residuals
+    needs_full_good = settings.print_residual_geometry or settings.plot_residuals
+    needs_full_bad = (
+        settings.print_residual_geometry
+        or settings.plot_residuals
+        or settings.multidirectional_som
+    )
 
-    if needs_full_residuals:
+    good_residuals = None
+    bad_residuals = None
+
+    if needs_full_good:
         print("* Obtaining residuals for good prompts...")
         good_residuals = model.get_residuals_batched(good_prompts)
-        print("* Obtaining residuals for bad prompts...")
-        bad_residuals = model.get_residuals_batched(bad_prompts)
-
         good_means = good_residuals.mean(dim=0)
-        bad_means = bad_residuals.mean(dim=0)
-
-        analyzer = Analyzer(settings, model, good_residuals, bad_residuals)
-
-        if settings.print_residual_geometry:
-            analyzer.print_residual_geometry()
-
-        if settings.plot_residuals:
-            analyzer.plot_residuals()
-
-        # We don't need the full residuals after computing their means and analyzing geometry.
-        del good_residuals, bad_residuals, analyzer
     else:
         print("* Obtaining residual mean for good prompts...")
         good_means = model.get_residuals_mean(good_prompts)
+
+    if needs_full_bad:
+        print("* Obtaining residuals for bad prompts...")
+        bad_residuals = model.get_residuals_batched(bad_prompts)
+        bad_means = bad_residuals.mean(dim=0)
+    else:
         print("* Obtaining residual mean for bad prompts...")
         bad_means = model.get_residuals_mean(bad_prompts)
 
-    refusal_directions = F.normalize(bad_means - good_means, p=2, dim=1)
+    if settings.print_residual_geometry or settings.plot_residuals:
+        analyzer = Analyzer(settings, model, good_residuals, bad_residuals)
+        if settings.print_residual_geometry:
+            analyzer.print_residual_geometry()
+        if settings.plot_residuals:
+            analyzer.plot_residuals()
+        del analyzer
+
+    # Build the set of "bad" direction means: shape (num_directions, layers, hidden_dim).
+    if settings.multidirectional_som:
+        from .som import SOMCalculator
+
+        num_layers = bad_residuals.shape[1]
+        print("* Retrieving multi-directions through self-organizing map...")
+
+        per_layer_means = []
+        for layer_idx in range(num_layers):
+            print(f"  * Processing layer {layer_idx + 1}/{num_layers}...")
+            layer_residuals = bad_residuals[:,
+                                            layer_idx, :].cpu().float().numpy()
+
+            som_calc = SOMCalculator(
+                som_x=settings.som_x,
+                som_y=settings.som_y,
+                iterations=settings.som_iterations,
+                lr=settings.som_lr,
+                sigma=settings.som_sigma,
+            )
+            som_calc.fit(layer_residuals)
+            top_k_weights = som_calc.get_top_k_neuron_weights(k=settings.som_k)
+
+            t = torch.tensor(
+                top_k_weights, dtype=good_means.dtype, device=good_means.device
+            )
+            # SOM may return fewer than k unique neurons; pad by repetition.
+            if t.shape[0] < settings.som_k:
+                reps = settings.som_k // t.shape[0]
+                t = t.repeat(max(reps, 1), 1)
+                if t.shape[0] < settings.som_k:
+                    t = torch.cat([t, t[: settings.som_k - t.shape[0]]], dim=0)
+            t = t[: settings.som_k]
+
+            per_layer_means.append(t)
+
+        # (layers, k, hidden) -> (k, layers, hidden)
+        bad_means_multi = torch.stack(per_layer_means, dim=0).permute(1, 0, 2)
+    else:
+        bad_means_multi = bad_means.unsqueeze(0)  # (1, layers, hidden)
+
+    refusal_directions = [
+        F.normalize(bm - good_means, p=2, dim=1) for bm in bad_means_multi
+    ]
 
     if settings.orthogonalize_direction:
         # Implements https://huggingface.co/blog/grimjim/projected-abliteration
-        # Adjust the refusal directions so that only the component that is
-        # orthogonal to the good direction is subtracted during abliteration.
         good_directions = F.normalize(good_means, p=2, dim=1)
-        projection_vector = torch.sum(refusal_directions * good_directions, dim=1)
-        refusal_directions = (
-            refusal_directions - projection_vector.unsqueeze(1) * good_directions
-        )
-        refusal_directions = F.normalize(refusal_directions, p=2, dim=1)
-        del good_directions, projection_vector
+        orthogonalized = []
+        for rd in refusal_directions:
+            projection_vector = torch.sum(rd * good_directions, dim=1)
+            rd = rd - projection_vector.unsqueeze(1) * good_directions
+            rd = F.normalize(rd, p=2, dim=1)
+            orthogonalized.append(rd)
+        refusal_directions = orthogonalized
+        del good_directions
+
+    # (directions, layers, hidden) -> (layers, directions, hidden)
+    refusal_directions = torch.stack(
+        refusal_directions, dim=0).permute(1, 0, 2)
 
     del good_means, bad_means
+    if good_residuals is not None:
+        del good_residuals
+    if bad_residuals is not None:
+        del bad_residuals
 
     # Clear cache before starting the optimization study.
-    # This should free up memory from the objects released with the del statements above.
     empty_cache()
 
     trial_index = 0
@@ -607,6 +679,8 @@ def run():
         parameters = {}
 
         for component in model.get_abliterable_components():
+            n_directions = refusal_directions.shape[1]
+
             # The parameter ranges are based on experiments with various models
             # and much wider ranges. They are not set in stone and might have to be
             # adjusted for future models.
@@ -618,28 +692,33 @@ def run():
             # removing refusals and tends to damage model intelligence more than
             # ablating the attention output, so on many models the optimum is to leave
             # it (mostly) untouched. See issue #202.
+
             max_weight_lower_bound = -0.25 if component == "mlp.down_proj" else 0.8
-            max_weight = max(
-                0.0,
-                trial.suggest_float(
-                    f"{component}.max_weight",
-                    max_weight_lower_bound,
-                    1.5,
-                ),
-            )
+            max_weights = [
+                max(
+                    0.0,
+                    trial.suggest_float(
+                        f"{component}.max_weight.{i}",
+                        max_weight_lower_bound,
+                        1.5,
+                    ),
+                )
+                for i in range(n_directions)
+            ]
             max_weight_position = trial.suggest_float(
                 f"{component}.max_weight_position",
                 0.6 * last_layer_index,
                 1.0 * last_layer_index,
             )
-            # For sampling purposes, min_weight is expressed as a fraction of max_weight,
-            # again because multivariate TPE doesn't support variable-range parameters.
-            # The value is transformed into the actual min_weight value below.
-            min_weight = trial.suggest_float(
-                f"{component}.min_weight",
-                0.0,
-                1.0,
-            )
+            # min_weight is expressed as a fraction of max_weight (transformed below).
+            min_weight_fractions = [
+                trial.suggest_float(
+                    f"{component}.min_weight.{i}",
+                    0.0,
+                    1.0,
+                )
+                for i in range(n_directions)
+            ]
             min_weight_distance = trial.suggest_float(
                 f"{component}.min_weight_distance",
                 1.0,
@@ -647,14 +726,18 @@ def run():
             )
 
             parameters[component] = AbliterationParameters(
-                max_weight=max_weight,
+                max_weights=max_weights,
                 max_weight_position=max_weight_position,
-                min_weight=(min_weight * max_weight),
+                min_weights=[
+                    frac * mw
+                    for frac, mw in zip(min_weight_fractions, max_weights)
+                ],
                 min_weight_distance=min_weight_distance,
             )
 
         trial.set_user_attr("direction_index", direction_index)
-        trial.set_user_attr("parameters", {k: asdict(v) for k, v in parameters.items()})
+        trial.set_user_attr("parameters", {k: asdict(v)
+                            for k, v in parameters.items()})
 
         print()
         print(
@@ -675,7 +758,8 @@ def run():
             settings.n_trials - trial_index
         )
         print()
-        print(f"[grey50]Elapsed time: [bold]{format_duration(elapsed_time)}[/][/]")
+        print(
+            f"[grey50]Elapsed time: [bold]{format_duration(elapsed_time)}[/][/]")
         if trial_index < settings.n_trials:
             print(
                 f"[grey50]Estimated remaining time: [bold]{format_duration(remaining_time)}[/][/]"
@@ -904,10 +988,10 @@ def run():
                 model.abliterate(
                     refusal_directions,
                     trial.user_attrs["direction_index"],
-                    {
-                        k: AbliterationParameters(**v)
-                        for k, v in trial.user_attrs["parameters"].items()
-                    },
+                    build_abliteration_parameters(
+                        trial.user_attrs["parameters"],
+                        refusal_directions.shape[1],
+                    ),
                 )
 
             reset_trial_model()
@@ -997,7 +1081,8 @@ def run():
                                 empty_cache()
                                 model.tokenizer.save_pretrained(save_directory)
                                 if model.processor is not None:
-                                    model.processor.save_pretrained(save_directory)
+                                    model.processor.save_pretrained(
+                                        save_directory)
                                 reset_trial_model()
 
                             print(f"Model saved to [bold]{save_directory}[/].")
@@ -1050,7 +1135,8 @@ def run():
                                 user.get("name", "unknown user"),
                             )
                             email = user.get("email", "no email found")
-                            print(f"Logged in as [bold]{fullname} ({email})[/]")
+                            print(
+                                f"Logged in as [bold]{fullname} ({email})[/]")
 
                             repo_id = ask_if_unset(
                                 settings.upload_repo_id,
@@ -1131,7 +1217,8 @@ def run():
                                                 value="none",
                                             ),
                                         ],
-                                        style=Style([("highlighted", "reverse")]),
+                                        style=Style(
+                                            [("highlighted", "reverse")]),
                                     ),
                                 )
                                 if reproducibility_information is None:
@@ -1296,7 +1383,8 @@ def run():
                                     ).unsafe_ask()
                                     if not message:
                                         break
-                                    chat.append({"role": "user", "content": message})
+                                    chat.append(
+                                        {"role": "user", "content": message})
 
                                     print("[bold]Assistant:[/] ", end="")
                                     response = model.stream_chat_response(chat)
@@ -1338,8 +1426,10 @@ def run():
                             benchmark_original_model = scope == "Benchmark both models"
 
                             hflm = HFLM(
-                                pretrained=model.model,  # ty:ignore[invalid-argument-type]
-                                tokenizer=model.tokenizer,  # ty:ignore[invalid-argument-type]
+                                # ty:ignore[invalid-argument-type]
+                                pretrained=model.model,
+                                # ty:ignore[invalid-argument-type]
+                                tokenizer=model.tokenizer,
                                 batch_size="auto",
                             )
 
@@ -1348,7 +1438,8 @@ def run():
                             table.add_column("Metric")
                             if benchmark_original_model:
                                 table.add_column("This model", justify="right")
-                                table.add_column("Original model", justify="right")
+                                table.add_column(
+                                    "Original model", justify="right")
                             else:
                                 table.add_column("Value", justify="right")
 
@@ -1369,7 +1460,8 @@ def run():
 
                                     results = get_results()
                                     if benchmark_original_model:
-                                        with model.model.disable_adapter():  # ty:ignore[call-non-callable]
+                                        # ty:ignore[call-non-callable]
+                                        with model.model.disable_adapter():
                                             original_results = get_results()
 
                                     first_row = True
@@ -1378,7 +1470,8 @@ def run():
                                         if metric != "alias":
                                             if first_row and not first_benchmark:
                                                 if benchmark_original_model:
-                                                    table.add_row("", "", "", "")
+                                                    table.add_row(
+                                                        "", "", "", "")
                                                 else:
                                                     table.add_row("", "", "")
 
@@ -1421,6 +1514,26 @@ def run():
                         print(f"[red]Error:\n{formatted}[/]")
                     else:
                         print(f"[red]Error: {formatted}[/]")
+
+
+def build_abliteration_parameters(
+    attr_parameters: dict,
+    n_directions: int,
+) -> dict[str, AbliterationParameters]:
+    """
+    Builds AbliterationParameters from stored trial user_attrs, upgrading
+    old single-direction checkpoints (scalar max_weight/min_weight) to the
+    new list-based format.
+    """
+    result = {}
+    for component, v in attr_parameters.items():
+        v = dict(v)
+        if "max_weight" in v and "max_weights" not in v:
+            v["max_weights"] = [v.pop("max_weight")] * n_directions
+        if "min_weight" in v and "min_weights" not in v:
+            v["min_weights"] = [v.pop("min_weight")] * n_directions
+        result[component] = AbliterationParameters(**v)
+    return result
 
 
 def main():
